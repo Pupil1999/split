@@ -20,22 +20,24 @@ contract Split is Ownable, Pausable {
     event UBIpoolUpdate(address newAddr);
     event NFTAddrUpdate(address newAddr);
     event GPUAddrUpdate(address newAddr);
+    event TeamWalletUpdate(address newAddr);
+    event USDCAddrUpdate(address newAddr);
     event ShareAddressUpdate(
-        uint256 avatarId,
+        uint256 avatarTokenId,
         address copyrightOwner,
         address creator,
         address NFTOwner,
         address avatarWallet
     );
     event SharesUpdate(
-        uint256 avatarId,
+        uint256 avatarTokenId,
         uint64 copyrightOwnerShare,
         uint64 creatorShare,
         uint64 NFTOwnerShare,
         uint64 avatarWalletShare
     );
     event PaymentReceived(address payer, uint256 amount);
-    event ProfitDistributed(uint256 avatarId, address payee, uint256 amount);
+    event ProfitDistributed(uint256 avatarTokenId, address payee, uint256 amount);
 
     address public nftAddr; // the address of avatar NFT contract
     address public UBIpool; // a fixed profit sharing address
@@ -46,8 +48,8 @@ contract Split is Ownable, Pausable {
     uint64 public UBIShare; // UBIShare of profit other than GPU cost goes to UBIpool
     uint64 public teamShare; // teamShare of profit other than GPU cost goes to team
     mapping(address => uint256) _totalIncomeOf;
-    mapping(uint256 => ShareAddrs) _shareInfoOf; // avatarId => 4 addrs
-    mapping(uint256 => Shares) _sharesOf; // avatarId => 4 shares
+    mapping(uint256 => ShareAddrs) _shareInfoOf; // avatarTokenId => 4 addrs
+    mapping(uint256 => Shares) _sharesOf; // avatarTokenId => 4 shares
     mapping(uint256 => uint256) _avatarProfit;
 
     /**
@@ -132,22 +134,32 @@ contract Split is Ownable, Pausable {
         address newTeamWalletAddr_
     ) external onlyOwner() whenPaused() {
         teamWallet = newTeamWalletAddr_;
+
+        emit TeamWalletUpdate(newTeamWalletAddr_);
+    }
+
+    function setUSDCAddr(
+        address newUSDCAddr_
+    ) external onlyOwner() whenPaused() {
+        usdcAddr = newUSDCAddr_;
+
+        emit USDCAddrUpdate(newUSDCAddr_);
     }
 
     function shareInfoOf(
-        uint256 avatarId
+        uint256 avatarTokenId
     ) public view returns(ShareAddrs memory info) {
-        info = _shareInfoOf[avatarId];
+        info = _shareInfoOf[avatarTokenId];
     }
 
     function sharesOf(
-        uint256 avatarId
+        uint256 avatarTokenId
     ) public view returns(Shares memory shares) {
-        shares = _sharesOf[avatarId];
+        shares = _sharesOf[avatarTokenId];
     }
 
     function addShareInfo(
-        uint256 avatarId,
+        uint256 avatarTokenId,
         address copyrightOwner_,
         address creator_,
         address NFTOwner_,
@@ -157,13 +169,18 @@ contract Split is Ownable, Pausable {
         uint64 NFTOwnerShare_,
         uint64 avatarWalletShare_
     ) external onlyOwner() {
+        require(
+            IERC721(nftAddr).ownerOf(avatarTokenId) == NFTOwner_,
+            "wrong NFT owner"
+        );
+
         ShareAddrs memory addrs_ = ShareAddrs({
             copyrightOwner: copyrightOwner_,
             creator: creator_,
             NFTOwner: NFTOwner_,
             avatarWallet: avatarWallet_
         });
-        _shareInfoOf[avatarId] = addrs_;
+        _shareInfoOf[avatarTokenId] = addrs_;
 
         Shares memory shares_ = Shares({
             copyrightOwnerShare: copyrightOwnerShare_,
@@ -171,32 +188,37 @@ contract Split is Ownable, Pausable {
             NFTOwnerShare: NFTOwnerShare_,
             avatarWalletShare: avatarWalletShare_
         });
-        _sharesOf[avatarId] = shares_;
+        _sharesOf[avatarTokenId] = shares_;
 
-        emit ShareAddressUpdate(avatarId, copyrightOwner_, creator_, NFTOwner_, avatarWallet_);
-        emit SharesUpdate(avatarId, copyrightOwnerShare_, creatorShare_, NFTOwnerShare_, avatarWalletShare_);
+        emit ShareAddressUpdate(avatarTokenId, copyrightOwner_, creator_, NFTOwner_, avatarWallet_);
+        emit SharesUpdate(avatarTokenId, copyrightOwnerShare_, creatorShare_, NFTOwnerShare_, avatarWalletShare_);
     }
 
     function updateShareAddrs(
-        uint256 avatarId,
+        uint256 avatarTokenId,
         address newCopyrightOwner_,
         address newCreator_,
         address newNFTOwner_,
         address newAvatarWallet_
     ) external onlyOwner() {
+        require(
+            IERC721(nftAddr).ownerOf(avatarTokenId) == newNFTOwner_,
+            "wrong NFT owner"
+        );
+
         ShareAddrs memory newAddrs_ = ShareAddrs({
             copyrightOwner: newCopyrightOwner_,
             creator: newCreator_,
             NFTOwner: newNFTOwner_,
             avatarWallet: newAvatarWallet_
         });
-        _shareInfoOf[avatarId] = newAddrs_;
+        _shareInfoOf[avatarTokenId] = newAddrs_;
 
-        emit ShareAddressUpdate(avatarId, newCopyrightOwner_, newCreator_, newNFTOwner_, newAvatarWallet_);
+        emit ShareAddressUpdate(avatarTokenId, newCopyrightOwner_, newCreator_, newNFTOwner_, newAvatarWallet_);
     }
 
     function updateShares(
-        uint256 avatarId,
+        uint256 avatarTokenId,
         uint64 newCopyrightOwnerShare_,
         uint64 newCreatorShare_,
         uint64 newNFTOwnerShare_,
@@ -208,9 +230,9 @@ contract Split is Ownable, Pausable {
             NFTOwnerShare: newNFTOwnerShare_,
             avatarWalletShare: newAvatarWalletShare_
         });
-        _sharesOf[avatarId] = shares_;
+        _sharesOf[avatarTokenId] = shares_;
 
-        emit SharesUpdate(avatarId, newCopyrightOwnerShare_, newCreatorShare_, newNFTOwnerShare_, newAvatarWalletShare_);
+        emit SharesUpdate(avatarTokenId, newCopyrightOwnerShare_, newCreatorShare_, newNFTOwnerShare_, newAvatarWalletShare_);
     }
 
     /**
@@ -219,65 +241,71 @@ contract Split is Ownable, Pausable {
      * the call will revert.
      */
     function buyService(
-        uint256 avatarId,
+        uint256 avatarTokenId,
         uint256 payment
     ) public whenNotPaused() {
+        _payToThis(payment);
+        _avatarProfit[avatarTokenId] += payment;
+    }
+
+    // /**
+    //  * @dev The signature will have the USDC approved to this contract, once verified.
+    //  */
+    // function buyServiceWithSignature(
+    //     uint256 avatarTokenId,
+    //     uint256 payment,
+    //     uint256 deadline,
+    //     bytes memory signature
+    // ) external whenNotPaused() {
+    //     require(signature.length == 65, "Invalid signature length");
+
+    //     bytes32 r;
+    //     bytes32 s;
+    //     uint8 v;
+
+    //     assembly {
+    //         r := mload(add(signature, 0x20))
+    //         s := mload(add(signature, 0x40))
+    //         v := byte(0, mload(add(signature, 0x60)))
+    //     }
+
+    //     IERC20Permit(usdcAddr).permit(
+    //         msg.sender,
+    //         address(this),
+    //         payment,
+    //         deadline,
+    //         v,
+    //         r,
+    //         s
+    //     );
+
+    //     _payToThis(payment);
+    //     _avatarProfit[avatarTokenId] += payment;
+    // }
+
+    function _payToThis(
+        uint256 payment
+    ) internal {
         require(
             IERC20(usdcAddr).transferFrom(msg.sender, address(this), payment),
             "Transfer usdc to this contract failed."
         );
 
         emit PaymentReceived(msg.sender, payment);
-
-        _avatarProfit[avatarId] += payment;
-    }
-
-    /**
-     * @dev The signature will have the USDC approved to this contract, once verified.
-     */
-    function buyServiceWithSignature(
-        uint256 avatarId,
-        uint256 payment,
-        uint256 deadline,
-        bytes memory signature
-    ) external whenNotPaused() {
-        require(signature.length == 65, "Invalid signature length");
-
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-
-        assembly {
-            r := mload(add(signature, 0x20))
-            s := mload(add(signature, 0x40))
-            v := byte(0, mload(add(signature, 0x60)))
-        }
-
-        IERC20Permit(usdcAddr).permit(
-            msg.sender,
-            address(this),
-            payment,
-            deadline,
-            v,
-            r,
-            s
-        );
-
-        buyService(avatarId, payment);
     }
 
     /**
      * @dev Distribute balance to share accounts once payment is received.
      */
     function distribute(
-        uint256 avatarId,
+        uint256 avatarTokenId,
         uint256 amount
     ) external whenNotPaused() {
         require(
-            _avatarProfit[avatarId] >= amount, 
+            _avatarProfit[avatarTokenId] >= amount, 
             "no enough avatar profit for distribution"
         );
-        _avatarProfit[avatarId] -= amount;
+        _avatarProfit[avatarTokenId] -= amount;
 
         // Split to GPU share
         uint256 GPUPayment = amount * GPUShare / 10_000;
@@ -296,9 +324,9 @@ contract Split is Ownable, Pausable {
         _totalIncomeOf[UBIpool] += UBIPayment;
 
         // Split to profit sharing accounts of the avatar
-        ShareAddrs memory addrs = _shareInfoOf[avatarId];
+        ShareAddrs memory addrs = _shareInfoOf[avatarTokenId];
         uint256[4] memory shareAmounts = _calShares(
-            avatarId,
+            avatarTokenId,
             (amount - GPUPayment) * (10000 - UBIShare - teamShare) / 10000
         );
 
@@ -316,10 +344,12 @@ contract Split is Ownable, Pausable {
         _totalIncomeOf[addrs.NFTOwner] += shareAmounts[2];
         _totalIncomeOf[addrs.avatarWallet] += shareAmounts[3];
 
-        emit ProfitDistributed(avatarId, addrs.copyrightOwner, shareAmounts[0]);
-        emit ProfitDistributed(avatarId, addrs.creator, shareAmounts[1]);
-        emit ProfitDistributed(avatarId, addrs.NFTOwner, shareAmounts[2]);
-        emit ProfitDistributed(avatarId, addrs.avatarWallet, shareAmounts[3]);
+        emit ProfitDistributed(avatarTokenId, GPUCostAddr, GPUPayment);
+        emit ProfitDistributed(avatarTokenId, UBIpool, UBIPayment);
+        emit ProfitDistributed(avatarTokenId, addrs.copyrightOwner, shareAmounts[0]);
+        emit ProfitDistributed(avatarTokenId, addrs.creator, shareAmounts[1]);
+        emit ProfitDistributed(avatarTokenId, addrs.NFTOwner, shareAmounts[2]);
+        emit ProfitDistributed(avatarTokenId, addrs.avatarWallet, shareAmounts[3]);
 
         // Split to team wallet
         uint256 teamProfit = amount - GPUPayment - UBIPayment 
@@ -330,13 +360,15 @@ contract Split is Ownable, Pausable {
             "team profit distribution failed"
         );
         _totalIncomeOf[teamWallet] += teamProfit;
+
+        emit ProfitDistributed(avatarTokenId, teamWallet, teamProfit);
     }
 
     function _calShares(
-        uint256 avatarId,
+        uint256 avatarTokenId,
         uint256 amount
     ) internal view returns(uint256[4] memory shareAmounts){
-        Shares memory shares = _sharesOf[avatarId];
+        Shares memory shares = _sharesOf[avatarTokenId];
 
         uint64 totalShare = shares.copyrightOwnerShare + shares.creatorShare +
                             shares.NFTOwnerShare + shares.avatarWalletShare;
